@@ -436,7 +436,7 @@ tr:hover td { background: var(--surface2); }
       <h1>통합 대시보드</h1>
       <div class="topbar-right">
         <div class="date-chip" id="today-chip"></div>
-        <button id="save-file-btn" class="btn-export" onclick="saveFile()" style="background:var(--green);color:#fff;border:none">💾 저장</button>
+        <span id="sync-status" style="font-size:12px;color:#10b981;font-weight:500">🔄 불러오는 중...</span>
       </div>
     </div>
 
@@ -1010,7 +1010,6 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
   initData();
-  renderAll();
 });
 
 /* ══════════════════════════════════════════════════ CORE ENGINE ══════════════════════════════════════════════════ */
@@ -1021,52 +1020,87 @@ let taskFilter = 'all', taskFilter2 = 'all', showDone = false;
 function $(id) { return document.getElementById(id); }
 function fmt(n) { return n.toLocaleString(); }
 
-let _unsaved = false;
-function markUnsaved() {
-  _unsaved = true;
-  const btn = document.getElementById('save-file-btn');
-  if (btn) { btn.textContent = '💾 저장 (미저장)'; btn.style.background = '#dc2626'; }
-}
-function saveFile() {
-  const data = { tasks, costs, vendors, ddays, consumables, energy };
-  const json = JSON.stringify(data);
-  const el = document.getElementById('app-data');
-  el.textContent = json;
-  const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = '드림솔_시설관리.html'; a.click();
-  _unsaved = false;
-  const btn = document.getElementById('save-file-btn');
-  if (btn) { btn.textContent = '💾 저장'; btn.style.background = ''; }
-  showToast('파일이 저장되었습니다. 공유 폴더에 덮어쓰세요.');
+/* ── Supabase 설정 ── */
+const SB_URL = 'https://ffjjtpvubispjqftagex.supabase.co';
+const SB_KEY = 'sb_publishable_yg6k6RdCf5LWigCkCPE9Lw_wYNP4XIp';
+
+function setSyncStatus(state) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  if (state === 'saving') { el.textContent = '⏳ 저장 중...'; el.style.color = '#f59e0b'; }
+  else if (state === 'saved') { el.textContent = '✅ 자동저장됨'; el.style.color = '#10b981'; }
+  else if (state === 'error') { el.textContent = '❌ 저장 실패'; el.style.color = '#ef4444'; }
+  else if (state === 'loading') { el.textContent = '🔄 불러오는 중...'; el.style.color = '#6b7280'; }
 }
 
-/* ── 파일 저장 방식 (localStorage 대신) ── */
-function loadAllData() {
-  const el = document.getElementById('app-data');
-  if (!el) return {};
-  try { return JSON.parse(el.textContent) || {}; } catch(e) { return {}; }
+async function sbGet(table) {
+  const res = await fetch(`${SB_URL}/rest/v1/${table}?id=eq.1`, {
+    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
+  });
+  const rows = await res.json();
+  return rows[0]?.data || null;
 }
+
+async function sbSet(table, data) {
+  await fetch(`${SB_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates'
+    },
+    body: JSON.stringify({ id: 1, data })
+  });
+}
+
+let _saveTimer = null;
 function save(key, data) {
-  // 메모리에만 반영 (실제 저장은 saveFile()로)
+  // 메모리 반영은 이미 됨 - 디바운스 후 Supabase에 전체 저장
+  clearTimeout(_saveTimer);
+  setSyncStatus('saving');
+  _saveTimer = setTimeout(async () => {
+    try {
+      await Promise.all([
+        sbSet('ds_tasks', tasks),
+        sbSet('ds_costs', costs),
+        sbSet('ds_vendors', vendors),
+        sbSet('ds_ddays', ddays),
+        sbSet('ds_consumables', consumables),
+        sbSet('ds_energy', energy),
+      ]);
+      setSyncStatus('saved');
+    } catch(e) {
+      setSyncStatus('error');
+      console.error('Supabase 저장 오류:', e);
+    }
+  }, 600);
 }
-function load(key) { return []; } // 미사용 (initData에서 직접 처리)
 
-function initData() {
-  const saved = loadAllData();
-  tasks       = saved.tasks       || [];
-  costs       = saved.costs       || [];
-  vendors     = saved.vendors     || [];
-  ddays       = saved.ddays       || [];
-  consumables = saved.consumables || [];
-  energy      = saved.energy      || [];
-
+async function initData() {
+  setSyncStatus('loading');
   const today = new Date();
   const fd = d => {
     const r = new Date(today); r.setDate(r.getDate() + d);
     return r.toISOString().split('T')[0];
   };
+
+  try {
+    const [t, c, v, d, con, en] = await Promise.all([
+      sbGet('ds_tasks'), sbGet('ds_costs'), sbGet('ds_vendors'),
+      sbGet('ds_ddays'), sbGet('ds_consumables'), sbGet('ds_energy')
+    ]);
+    tasks       = t   || [];
+    costs       = c   || [];
+    vendors     = v   || [];
+    ddays       = d   || [];
+    consumables = con || [];
+    energy      = en  || [];
+    setSyncStatus('saved');
+  } catch(e) {
+    console.error('Supabase 불러오기 오류:', e);
+    setSyncStatus('error');
+    tasks = []; costs = []; vendors = []; ddays = []; consumables = []; energy = [];
+  }
 
   if (!tasks.length) {
     tasks = [
@@ -1074,6 +1108,7 @@ function initData() {
       {id:2, type:'설비', loc:'지하기계실 B2', detail:'순환펌프 2호기 메카니컬씰 누수 점검', vendor:'삼형기계', date:fd(-4), status:'진행중'},
       {id:3, type:'점검', loc:'공조실 전체', detail:'하절기 대비 공조 설비 정기점검 및 필터 청소', vendor:'에이스설비', date:fd(-7), status:'진행중'},
     ];
+    save('ds_tasks', tasks);
   }
   if (!costs.length) {
     costs = [
@@ -1082,6 +1117,7 @@ function initData() {
       {id:3, name:'외벽 메지 보수', orig:3200000, final:2000000, note:'장비 임대 최소화 (일정 조율)'},
       {id:4, name:'냉방기 필터 교체', orig:600000, final:200000, note:'자재 직구 + 자체 시공'},
     ];
+    save('ds_costs', costs);
   }
   if (!ddays.length) {
     ddays = [
@@ -1092,6 +1128,7 @@ function initData() {
       {id:5, name:'가스시설 정기검사', date:fd(3), completed:false},
       {id:6, name:'냉방기 안전점검', date:fd(18), completed:true},
     ];
+    save('ds_ddays', ddays);
   }
   if (!vendors.length) {
     vendors = [
@@ -1099,6 +1136,7 @@ function initData() {
       {id:2, name:'에이스설비', type:'공조/덕트', star:4, note:'단가 합리적, 소통 원활'},
       {id:3, name:'대원전력', type:'전기/계장', star:4, note:'전문성 높음, 일정 준수'}
     ];
+    save('ds_vendors', vendors);
   }
   if (!consumables.length) {
     consumables = [
@@ -1106,6 +1144,7 @@ function initData() {
       {id:2, name:'배수펌프 오일', cycle:4000, used:1200},
       {id:3, name:'보일러 세정제', cycle:1000, used:850}
     ];
+    save('ds_consumables', consumables);
   }
   if (!energy.length) {
     energy = [
@@ -1116,7 +1155,10 @@ function initData() {
       {month:'4월', elec:47000, elecCost:5640000, water:1220, waterCost:920000, gas:310, gasCost:410000},
       {month:'5월', elec:48200, elecCost:5800000, water:1240, waterCost:930000, gas:320, gasCost:420000}
     ];
+    save('ds_energy', energy);
   }
+
+  renderAll();
 }
 
 function renderAll() {
@@ -1264,7 +1306,7 @@ function toggleDdayComplete(id) {
   const d = ddays.find(x => x.id === id);
   if (!d) return;
   d.completed = !d.completed;
-  markUnsaved();
+  save('_', null);
   renderDdayTable(); renderDday(); updateComplianceRate();
   showToast(d.completed ? '점검 완료 처리되었습니다.' : '점검 미완료로 변경되었습니다.');
 }
@@ -1281,7 +1323,7 @@ function addDday() {
   const name = $('d-name').value.trim(), date = $('d-date').value;
   if (!name || !date) return;
   ddays.push({ id: Date.now(), name, date, completed: false });
-  markUnsaved();
+  save('_', null);
   $('d-name').value = '';
   hideModal('dday'); renderDday(); renderDdayTable();
   showToast('법정점검 일정이 추가되었습니다.');
@@ -1290,9 +1332,9 @@ function addDday() {
 function deleteDday(id) {
   const backup = [...ddays];
   ddays = ddays.filter(d => d.id !== id);
-  markUnsaved();
+  save('_', null);
   renderDday(); renderDdayTable();
-  showDeleteToast('점검 일정이 삭제되었습니다.', () => { ddays = backup; markUnsaved(); renderDday(); renderDdayTable(); });
+  showDeleteToast('점검 일정이 삭제되었습니다.', () => { ddays = backup; save('_', null); renderDday(); renderDdayTable(); });
 }
 
 /* ── TASKS ── */
@@ -1357,7 +1399,7 @@ function cycleStatus(id) {
   if (!t) return;
   const cycle = ['미착수','진행중','완료'];
   t.status = cycle[(cycle.indexOf(t.status)+1)%3];
-  markUnsaved();
+  save('_', null);
   renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
 }
 
@@ -1382,7 +1424,7 @@ function addTask() {
   if (!loc || !detail) return;
   
   tasks.push({ id: Date.now(), type, loc, detail, vendor, date, status:'미착수' });
-  markUnsaved();
+  save('_', null);
   $('f-loc').value=''; $('f-detail').value=''; $('f-vendor').value='';
   hideModal('task'); renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
   showToast('업무가 추가되었습니다.');
@@ -1391,9 +1433,9 @@ function addTask() {
 function deleteTask(id) {
   const backup = [...tasks];
   tasks = tasks.filter(t => t.id !== id);
-  markUnsaved();
+  save('_', null);
   renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
-  showDeleteToast('업무가 삭제되었습니다.', () => { tasks = backup; markUnsaved(); renderTasks(); renderTasks2(); updateDonut(); renderBarChart(); });
+  showDeleteToast('업무가 삭제되었습니다.', () => { tasks = backup; save('_', null); renderTasks(); renderTasks2(); updateDonut(); renderBarChart(); });
 }
 
 /* ── COSTS ── */
@@ -1438,7 +1480,7 @@ function addCost() {
   const name = $('c-name').value.trim(), orig = parseInt($('c-orig').value)||0, final = parseInt($('c-final').value)||0;
   if (!name) return;
   costs.push({ id: Date.now(), name, dept: $('c-dept').value.trim(), date: $('c-date').value, orig, final, note: $('c-note').value.trim() });
-  markUnsaved();
+  save('_', null);
   $('c-name').value=''; $('c-dept').value=''; $('c-date').value=''; $('c-orig').value=''; $('c-final').value=''; $('c-note').value='';
   hideModal('cost'); renderCosts(); renderCosts2(); renderLineChart();
   showToast('비용 항목이 추가되었습니다.');
@@ -1447,9 +1489,9 @@ function addCost() {
 function deleteCost(id) {
   const backup = [...costs];
   costs = costs.filter(c => c.id !== id);
-  markUnsaved();
+  save('_', null);
   renderCosts(); renderCosts2(); renderLineChart();
-  showDeleteToast('비용 항목이 삭제되었습니다.', () => { costs = backup; markUnsaved(); renderCosts(); renderCosts2(); renderLineChart(); });
+  showDeleteToast('비용 항목이 삭제되었습니다.', () => { costs = backup; save('_', null); renderCosts(); renderCosts2(); renderLineChart(); });
 }
 
 /* ── VENDORS ── */
@@ -1487,7 +1529,7 @@ function renderVendors2() {
 function addVendor() {
   const name = $('v-name').value.trim(); if (!name) return;
   vendors.push({ id: Date.now(), name, type: $('v-type').value.trim(), star: parseInt($('v-star').value)||5, note: $('v-note').value.trim() });
-  markUnsaved();
+  save('_', null);
   $('v-name').value=''; $('v-type').value=''; $('v-note').value='';
   hideModal('vendor'); renderVendors(); renderVendors2();
   showToast('업체 평가가 추가되었습니다.');
@@ -1496,9 +1538,9 @@ function addVendor() {
 function deleteVendor(id) {
   const backup = [...vendors];
   vendors = vendors.filter(v => v.id !== id);
-  markUnsaved();
+  save('_', null);
   renderVendors(); renderVendors2();
-  showDeleteToast('업체가 삭제되었습니다.', () => { vendors = backup; markUnsaved(); renderVendors(); renderVendors2(); });
+  showDeleteToast('업체가 삭제되었습니다.', () => { vendors = backup; save('_', null); renderVendors(); renderVendors2(); });
 }
 
 /* ── CONSUMABLES ── */
@@ -1527,22 +1569,22 @@ function addConsumable() {
   const name = $('con-name').value.trim(), cycle = parseInt($('con-cycle').value)||2000, used = parseInt($('con-used').value)||0;
   if (!name) return;
   consumables.push({ id: Date.now(), name, cycle, used });
-  markUnsaved();
+  save('_', null);
   $('con-name').value=''; $('con-cycle').value=''; $('con-used').value='';
   hideModal('consumable'); renderConsumables(); showToast('소모품이 추가되었습니다.');
 }
 
 function resetConsumable(id) {
   const c = consumables.find(x => x.id === id); if (!c) return;
-  c.used = 0; markUnsaved(); renderConsumables(); showToast('사용 시간이 초기화되었습니다.');
+  c.used = 0; save('_', null); renderConsumables(); showToast('사용 시간이 초기화되었습니다.');
 }
 
 function deleteConsumable(id) {
   const backup = [...consumables];
   consumables = consumables.filter(c => c.id !== id);
-  markUnsaved();
+  save('_', null);
   renderConsumables();
-  showDeleteToast('소모품이 삭제되었습니다.', () => { consumables = backup; markUnsaved(); renderConsumables(); });
+  showDeleteToast('소모품이 삭제되었습니다.', () => { consumables = backup; save('_', null); renderConsumables(); });
 }
 
 /* ── ENERGY ── */
@@ -1589,7 +1631,7 @@ function addEnergy() {
   if (existIdx > -1) { energy[existIdx] = { month, elec, elecCost, water, waterCost, gas, gasCost }; }
   else { energy.push({ month, elec, elecCost, water, waterCost, gas, gasCost }); }
   
-  markUnsaved(); hideModal('energy'); renderEnergyTable();
+  save('_', null); hideModal('energy'); renderEnergyTable();
   if ($('page-energy').classList.contains('active')) renderEnergyCharts();
   showToast('에너지 데이터가 기록되었습니다.');
 }
@@ -1597,10 +1639,10 @@ function addEnergy() {
 function deleteEnergy(idx) {
   const backup = [...energy];
   energy.splice(idx, 1);
-  markUnsaved();
+  save('_', null);
   renderEnergyTable();
   if ($('page-energy').classList.contains('active')) renderEnergyCharts();
-  showDeleteToast('에너지 데이터가 삭제되었습니다.', () => { energy = backup; markUnsaved(); renderEnergyTable(); if ($('page-energy').classList.contains('active')) renderEnergyCharts(); });
+  showDeleteToast('에너지 데이터가 삭제되었습니다.', () => { energy = backup; save('_', null); renderEnergyTable(); if ($('page-energy').classList.contains('active')) renderEnergyCharts(); });
 }
 
 function editEnergy(idx) {
