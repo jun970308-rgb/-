@@ -992,7 +992,7 @@ function doLogin() {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   const loggedIn = sessionStorage.getItem('ds_logged_in');
   if (loggedIn === 'true') {
     $('login-screen').classList.add('hide');
@@ -1009,7 +1009,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (e.key === 'Enter') doLogin();
     });
   }
-  initData();
+  await initData();
 });
 
 /* ══════════════════════════════════════════════════ CORE ENGINE ══════════════════════════════════════════════════ */
@@ -1325,7 +1325,7 @@ function addDday() {
   ddays.push({ id: Date.now(), name, date, completed: false });
   save('_', null);
   $('d-name').value = '';
-  hideModal('dday'); renderDday(); renderDdayTable();
+  hideModal('dday'); renderKPI(); renderDday(); renderDdayTable();
   showToast('법정점검 일정이 추가되었습니다.');
 }
 
@@ -1400,7 +1400,7 @@ function cycleStatus(id) {
   const cycle = ['미착수','진행중','완료'];
   t.status = cycle[(cycle.indexOf(t.status)+1)%3];
   save('_', null);
-  renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
+  renderKPI(); renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
 }
 
 function filterTask(f, btn) {
@@ -1426,7 +1426,7 @@ function addTask() {
   tasks.push({ id: Date.now(), type, loc, detail, vendor, date, status:'미착수' });
   save('_', null);
   $('f-loc').value=''; $('f-detail').value=''; $('f-vendor').value='';
-  hideModal('task'); renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
+  hideModal('task'); renderKPI(); renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
   showToast('업무가 추가되었습니다.');
 }
 
@@ -1434,8 +1434,8 @@ function deleteTask(id) {
   const backup = [...tasks];
   tasks = tasks.filter(t => t.id !== id);
   save('_', null);
-  renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
-  showDeleteToast('업무가 삭제되었습니다.', () => { tasks = backup; save('_', null); renderTasks(); renderTasks2(); updateDonut(); renderBarChart(); });
+  renderKPI(); renderTasks(); renderTasks2(); updateDonut(); renderBarChart();
+  showDeleteToast('업무가 삭제되었습니다.', () => { tasks = backup; save('_', null); renderKPI(); renderTasks(); renderTasks2(); updateDonut(); renderBarChart(); });
 }
 
 /* ── COSTS ── */
@@ -1482,7 +1482,7 @@ function addCost() {
   costs.push({ id: Date.now(), name, dept: $('c-dept').value.trim(), date: $('c-date').value, orig, final, note: $('c-note').value.trim() });
   save('_', null);
   $('c-name').value=''; $('c-dept').value=''; $('c-date').value=''; $('c-orig').value=''; $('c-final').value=''; $('c-note').value='';
-  hideModal('cost'); renderCosts(); renderCosts2(); renderLineChart();
+  hideModal('cost'); renderKPI(); renderCosts(); renderCosts2(); renderLineChart();
   showToast('비용 항목이 추가되었습니다.');
 }
 
@@ -1490,8 +1490,8 @@ function deleteCost(id) {
   const backup = [...costs];
   costs = costs.filter(c => c.id !== id);
   save('_', null);
-  renderCosts(); renderCosts2(); renderLineChart();
-  showDeleteToast('비용 항목이 삭제되었습니다.', () => { costs = backup; save('_', null); renderCosts(); renderCosts2(); renderLineChart(); });
+  renderKPI(); renderCosts(); renderCosts2(); renderLineChart();
+  showDeleteToast('비용 항목이 삭제되었습니다.', () => { costs = backup; save('_', null); renderKPI(); renderCosts(); renderCosts2(); renderLineChart(); });
 }
 
 /* ── VENDORS ── */
